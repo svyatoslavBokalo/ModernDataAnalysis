@@ -5,7 +5,7 @@ import time
 import websocket
 from collections import deque, defaultdict
 import alpaca_trade_api as tradeapi
-from creds import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_URL, ALPACA_PAPER
+from keys import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_URL, ALPACA_PAPER
 from retrain_model import Model
 
 
@@ -197,7 +197,7 @@ class CryptoTradingStrategy:
         ma_slow_prev = defaultdict(float)
 
         ## These are the ideal parameters from backtesting
-        ## We will start with them and retrain the model
+        ## We will start with them and retrain the modele
         # Ideal parameters from backtesting
         self.parameters = {
             'BTC/USD': {'ma_fast': 295, 'ma_slow': 200},

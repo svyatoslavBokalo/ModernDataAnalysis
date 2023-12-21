@@ -4,6 +4,9 @@ import numpy as np
 import pandas as pd
 import os
 from tqdm import tqdm
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
 
 import sqlite3
 
@@ -58,8 +61,49 @@ class Model:
             self.data[pair] = pd.concat([self.data[pair], temp_df], ignore_index=True)
 
 
+    # def retrain_strat(self, pair, temp_df):
+    #     best_parameters= {}
+
+    #     time_start = time.time()
+
+    #     if pair not in self.data:
+    #         self.load_data(pair)
+
+    #     # Save data to the database and dictionary
+    #     self.save_to_database(pair, temp_df)
+    #     self.save_to_temporary(pair, temp_df)
+
+    #     # Now proceed with retraining using the updated data
+    #     data = self.data[pair]
+        
+    #     # Fetch data for each ticker
+    #     data['Log Returns'] = np.log(data['close'] / data['close'].shift(1))
+        
+    #     # Initialize with a very low return
+    #     best_return = -np.inf  
+
+    #     for MAS in tqdm(range(100, 801, 15), desc=f"Processing MAS for {pair}", leave=False):
+    #         for MAF in range(50, min(400, int(MAS * 0.75)), 6):
+    #             data['MASlow'] = data['close'].rolling(MAS).mean()
+    #             data['MAFast'] = data['close'].rolling(MAF).mean()
+    #             data['Signal'] = np.where(data['MAFast'] > data['MASlow'], 1, 0)
+
+    #             data['Strategy Log Returns'] = data['Log Returns'] * data['Signal'].shift(1)
+    #             strategy_return = (np.exp(data['Strategy Log Returns'].sum()) - 1) * 100
+
+    #             if strategy_return > best_return:
+    #                 best_return = strategy_return
+    #                 best_parameters[pair] = {'ma_slow': MAS, 'ma_fast': MAF}
+        
+    #     self.parameters[pair] = best_parameters[pair]
+
+    #     time_end = time.time()
+    #     print(f"Time taken to retrain model for {pair}: {time_end - time_start} seconds")
+
+    #     return best_parameters[pair]
+            
     def retrain_strat(self, pair, temp_df):
-        best_parameters= {}
+        best_parameters = {}
 
         time_start = time.time()
 
@@ -72,26 +116,49 @@ class Model:
 
         # Now proceed with retraining using the updated data
         data = self.data[pair]
-        
+
         # Fetch data for each ticker
         data['Log Returns'] = np.log(data['close'] / data['close'].shift(1))
-        
-        # Initialize with a very low return
-        best_return = -np.inf  
 
-        for MAS in tqdm(range(100, 801, 15), desc=f"Processing MAS for {pair}", leave=False):
-            for MAF in range(50, min(400, int(MAS * 0.75)), 6):
-                data['MASlow'] = data['close'].rolling(MAS).mean()
-                data['MAFast'] = data['close'].rolling(MAF).mean()
-                data['Signal'] = np.where(data['MAFast'] > data['MASlow'], 1, 0)
+        # Normalize data
+        scaler = MinMaxScaler()
+        data[['close', 'Log Returns']] = scaler.fit_transform(data[['close', 'Log Returns']])
 
-                data['Strategy Log Returns'] = data['Log Returns'] * data['Signal'].shift(1)
-                strategy_return = (np.exp(data['Strategy Log Returns'].sum()) - 1) * 100
+        # Prepare data for LSTM
+        X = []
+        y = []
+        for i in range(len(data) - self.lookback - 1):
+            X.append(data['Log Returns'].values[i:(i + self.lookback)])
+            y.append(data['Log Returns'].values[i + self.lookback])
+        X, y = np.array(X), np.array(y)
 
-                if strategy_return > best_return:
-                    best_return = strategy_return
-                    best_parameters[pair] = {'ma_slow': MAS, 'ma_fast': MAF}
-        
+        X = np.reshape(X, (X.shape[0], X.shape[1], 1))
+
+        # Build LSTM model
+        model = Sequential()
+        model.add(LSTM(units=50, return_sequences=True, input_shape=(X.shape[1], 1)))
+        model.add(LSTM(units=50, return_sequences=False))
+        model.add(Dense(units=1))
+        model.compile(optimizer='adam', loss='mean_squared_error')
+
+        # Train the model
+        model.fit(X, y, epochs=50, batch_size=32)
+
+        # Make predictions
+        predictions = model.predict(X)
+        predictions = scaler.inverse_transform(predictions)
+
+        # Calculate returns based on predictions
+        data['Strategy Log Returns'] = 0.0
+        data['Strategy Log Returns'].iloc[self.lookback:len(predictions) + self.lookback] = predictions.flatten()
+
+        strategy_return = (np.exp(data['Strategy Log Returns'].sum()) - 1) * 100
+
+        print(f"Strategy return: {strategy_return}")
+
+        # Update best parameters
+        best_parameters[pair] = {'lstm_units': 50, 'epochs': 50, 'batch_size': 32}
+
         self.parameters[pair] = best_parameters[pair]
 
         time_end = time.time()
